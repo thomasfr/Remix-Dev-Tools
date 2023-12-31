@@ -4,10 +4,14 @@ import { parse } from "es-module-lexer";
 import { cutArrayToLastN } from "../utils/common.js";
 import { handleGoToSource } from "../../dev-server/init.js";
 import { DevToolsServerConfig } from "../../dev-server/config.js";
-import { handleDevToolsViteRequest, processPlugins } from "./utils.js";
+import { handleApplicationViteRequest, handleDevToolsViteRequest, processPlugins } from "./utils.js";
 import { ActionEvent, LoaderEvent } from "../../dev-server/event-queue.js";
+import { diffInMs } from "../../dev-server/perf.js"
+import chalk from "chalk"
 
 const routeInfo = new Map<string, { loader: LoaderEvent[]; action: ActionEvent[] }>();
+
+
 
 export const remixDevTools: (args?: {
   pluginDir?: string;
@@ -18,6 +22,7 @@ export const remixDevTools: (args?: {
   const plugins = pluginDir ? processPlugins(pluginDir) : [];
   const pluginNames = plugins.map((p) => p.name);
   let port = 5173;
+  let serverBuild = null;
   return [
     {
       enforce: "post",
@@ -90,6 +95,63 @@ export const remixDevTools: (args?: {
         });
       },
     },
+
+    // Application Runtime Events:
+    // - loader, action requests including timing information
+    // - document requests (hopefully with timeing information)
+    // - file change events
+
+    // Application Static Informations:
+    // - routes
+    // - loader, action, meta, handle, error boundaries,
+
+    // 1. Remix Powerkit Server will load the remix server build to get the static information
+    // 2. Remix Application will send the runtime information to the remix powerkit server
+
+    /*
+    * 1. Filter for remix document requests using the build with the route infos
+    * 2. Send the request to the remix powerkit server
+    * 3. Nice to have: Find a way to get the response object
+    */
+    {
+      enforce: "post",
+      name: "remix-powerkit-server",
+      apply(config) {
+        return config.mode === "development";
+      },
+      handleHotUpdate({file, modules, server, timestamp}) {
+        console.log("handleHotUpdate", file, timestamp)
+      },
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (!req.url || req.url?.includes('remix-dev-tools') || req.url?.match(/\.(css|js|ts|tsx|ico|jpg|jpeg|png|svg)/) || req.url?.match(/^\/@/) ) {
+            return next();
+          }
+          const start = performance.now();
+          const url = new URL(req.url, `http://${req.headers.host}`);
+          console.log(`Request for '${req.method?.toUpperCase()} ${req.url}'`)
+
+          const originalEnd = res.end;
+          // @ts-ignore-next-line
+          res.end = (foo, bar, baz) => {
+            if (url.searchParams.has('_data')) {
+              if (req.method?.toLowerCase() !== 'get') {
+                console.log(`Response for ${chalk.redBright("Action Request")} '${chalk.greenBright(req.method?.toUpperCase())} ${chalk.whiteBright(req.url)}' - ${chalk.white(`${diffInMs(start)} ms`)}`,JSON.parse(JSON.stringify(res.getHeaders())))
+              } else {
+                console.log(`Response for ${chalk.redBright("Loader Request")} '${chalk.greenBright(req.method?.toUpperCase())} ${chalk.whiteBright(req.url)}' - ${chalk.white(`${diffInMs(start)} ms`)}`, JSON.parse(JSON.stringify(res.getHeaders())))
+              }
+            } else if(req.method?.toLowerCase() === 'get') {
+              console.log(`Response for ${chalk.redBright("Document Request")} '${chalk.greenBright(req.method?.toUpperCase())} ${chalk.whiteBright(req.url)}' - ${chalk.white(`${diffInMs(start)} ms`)}`, JSON.parse(JSON.stringify(res.getHeaders())),)
+            }
+
+            // @ts-ignore-next-line
+            return originalEnd.apply(res, [foo, bar, baz]);
+          }
+          return next();
+        });
+      },
+
+    },
     {
       name: "remix-development-tools",
       apply(config) {
@@ -98,6 +160,7 @@ export const remixDevTools: (args?: {
       transform(code, id) {
         // Wraps loaders/actions
         if (id.includes("virtual:server-entry") || id.includes("virtual:remix/server-build")) {
+          serverBuild = code;
           const updatedCode = [
             `import { augmentLoadersAndActions } from "remix-development-tools/server";`,
             code.replace("export const routes =", "const routeModules ="),

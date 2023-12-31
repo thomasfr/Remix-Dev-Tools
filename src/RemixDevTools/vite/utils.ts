@@ -42,3 +42,15 @@ export const handleDevToolsViteRequest = (
     res.write("OK");
   });
 };
+export const handleApplicationViteRequest = (
+  req: Connect.IncomingMessage,
+  res: ServerResponse<IncomingMessage>,
+  next: Connect.NextFunction,
+  cb: (data: any) => void
+) => {
+  if (req.url?.match(/\.(css|js|ts|tsx|ico|jpg|png)/) || req.url?.match(/^\/@/) || req.url?.includes('remix-dev-tools')) {
+    return next();
+  }
+  cb({});
+  return next();
+};

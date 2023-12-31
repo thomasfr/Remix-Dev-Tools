@@ -114,6 +114,7 @@ export const withServerDevTools = <T extends ServerBuild>(build: T, config?: Dev
   };
 };
 
+// gets used from vite plugin
 export const augmentLoadersAndActions = <T extends ServerRouteManifest>(routes: T) => {
   return Object.entries(routes).reduce((acc, [name, route]) => {
     return {
