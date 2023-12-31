@@ -21,8 +21,3 @@ export default function DashboardRoute() {
     </div>
   );
 }
-
-
-export function something() {
-  return "something";
-}
