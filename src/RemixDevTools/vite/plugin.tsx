@@ -10,6 +10,9 @@ import { diffInMs } from "../../dev-server/perf.js"
 import chalk from "chalk"
 import { OutgoingHttpHeader } from "node:http"
 
+import { getClient } from "../../RemixPowerKit/client.js"
+const remixPowerKitClient = getClient()
+
 const routeInfo = new Map<string, { loader: LoaderEvent[]; action: ActionEvent[] }>();
 
 export const remixDevTools: (args?: {
@@ -117,9 +120,62 @@ export const remixDevTools: (args?: {
       apply(config) {
         return config.mode === "development";
       },
-      handleHotUpdate({file, timestamp}) {
+      buildStart() {
+        const msg = `[BuildStart]`
         // eslint-disable-next-line no-console
-        console.log(`${chalk.redBright("[HandleHotUpdate]")}`, file, timestamp)
+        console.log(`${chalk.redBright(msg)} SENDING`)
+
+        remixPowerKitClient.events.$post({
+          json:{
+            message: msg,
+          }
+        })
+        .catch((error) => {
+          // eslint-disable-next-line no-console
+          console.error(`${chalk.redBright(msg)} ERROR`, error)
+        })
+        .finally(() => {
+          // eslint-disable-next-line no-console
+          console.log(`${chalk.redBright(msg)} SENT`)
+        })
+      },
+      watchChange(id, change) {
+        const msg = `[WatchChange]`
+        // eslint-disable-next-line no-console
+        console.log(`${chalk.redBright(msg)} ${chalk.yellowBright(id)} ${chalk.yellowBright(change)} SENDING`)
+
+        remixPowerKitClient.events.$post({
+          json:{
+            message: msg,
+          }
+        })
+        .catch((error) => {
+          // eslint-disable-next-line no-console
+          console.error(`${chalk.redBright(msg)} ERROR`, error)
+        })
+        .finally(() => {
+          // eslint-disable-next-line no-console
+          console.log(`${chalk.redBright(msg)} SENT`)
+        })
+      },
+      handleHotUpdate({file, timestamp}) {
+        const msg = '[HandleHotUpdate]'
+        // eslint-disable-next-line no-console
+        console.log(`${chalk.redBright(msg)} SENDING`, file, timestamp)
+
+        remixPowerKitClient.events.$post({
+          json:{
+            message: msg,
+          }
+        })
+        .catch((error) => {
+          // eslint-disable-next-line no-console
+          console.error(`${chalk.redBright(msg)} ERROR`, error)
+        })
+        .finally(() => {
+          // eslint-disable-next-line no-console
+          console.log(`${chalk.redBright(msg)} SENT`)
+        })
       },
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
@@ -146,37 +202,70 @@ export const remixDevTools: (args?: {
           // TODO: Add a proper request id to the request
           // req.headers['x-request-id'] = `${Date.now()}-${Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)}`
 
-          const requestHeaders = req.headers;
-          const requestMethod = chalk.yellowBright(method)
-          const requestUrl = chalk.yellowBright(decodeURI(url.toString()))
+          // const requestHeaders = req.headers;
+          const requestMethod = method
+          const requestUrl = decodeURI(url.toString())
           let requestType = 'Request';
           if (isActionRequest){
-            requestType = chalk.redBright('[Action]');
+            requestType = '[Action]';
           } else if(isLoaderRequest) {
-            requestType = chalk.redBright('[Loader]');
+            requestType = '[Loader]';
           } else if(isDocumentRequest) {
-            requestType = chalk.redBright('[Document]');
+            requestType = '[Document]';
           }
 
           // Request
+          const requestMsg = `${chalk.redBright(requestType)} Request for ${chalk.yellowBright(requestMethod)} ${chalk.yellowBright(requestUrl)}`
           // eslint-disable-next-line no-console
-          console.log(`${requestType} Request for ${requestMethod} ${requestUrl}`, requestHeaders)
+          console.log(`${requestMsg} SENDING`)
+
+          remixPowerKitClient.events.$post({
+            json:{
+              message: `${requestType} Request for ${requestMethod} ${requestUrl}`,
+            }
+          })
+          .catch((error) => {
+            // eslint-disable-next-line no-console
+            console.error(`${requestMsg} ERROR`, error)
+          })
+          .finally(() => {
+            // eslint-disable-next-line no-console
+            console.log(`${requestMsg} SENT`)
+          })
 
           const originalEnd = res.end;
           // @ts-ignore-next-line
           res.end = (...args) => {
-            const responseTime = `${chalk.white(diffInMs(start))}ms`
+            const responseTime = diffInMs(start)
+
+            // @ts-ignore-next-line
+            const originalResult = originalEnd.apply(res, args);
+
             const responseHeaders:{[key: string]:undefined|OutgoingHttpHeader} = {}
             for(const [key, value] of Object.entries(res.getHeaders())) {
               responseHeaders[key] = value
             }
 
             // Response
+            const responseMsg = `${chalk.redBright(requestType)} Response for ${chalk.yellowBright(requestMethod)} ${chalk.yellowBright(requestUrl)} - ${chalk.white(responseTime)}ms`
             // eslint-disable-next-line no-console
-            console.log(`${requestType} Response for ${requestMethod} ${requestUrl} - ${responseTime}`, responseHeaders)
+            console.log(`${responseMsg} SENDING`)
 
-            // @ts-ignore-next-line
-            return originalEnd.apply(res, args);
+            remixPowerKitClient.events.$post({
+              json:{
+                message: `${requestType} Response for ${requestMethod} ${requestUrl} - ${responseTime}ms`,
+              }
+            })
+            .catch((error) => {
+              // eslint-disable-next-line no-console
+              console.error(`${responseMsg} ERROR`, error)
+            })
+            .finally(() => {
+              // eslint-disable-next-line no-console
+              console.log(`${responseMsg} SENT`)
+            })
+
+            return originalResult
           }
 
           return next();
