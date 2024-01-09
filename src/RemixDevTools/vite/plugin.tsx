@@ -10,8 +10,7 @@ import { diffInMs } from "../../dev-server/perf.js"
 import chalk from "chalk"
 import { OutgoingHttpHeader } from "node:http"
 
-import { getClient } from "../../RemixPowerKit/client.js"
-const remixPowerKitClient = getClient()
+import { EventTypes, send } from "../../RemixPowerKit/client.js"
 
 const routeInfo = new Map<string, { loader: LoaderEvent[]; action: ActionEvent[] }>();
 
@@ -23,6 +22,7 @@ export const remixDevTools: (args?: {
   const pluginDir = args?.pluginDir || undefined;
   const plugins = pluginDir ? processPlugins(pluginDir) : [];
   const pluginNames = plugins.map((p) => p.name);
+  let projectIdentifier = "remix-project";
   let port = 5173;
   return [
     {
@@ -118,125 +118,81 @@ export const remixDevTools: (args?: {
       enforce: "post",
       name: "remix-powerkit-server",
       apply(config) {
+        projectIdentifier = config.root || process.cwd();
         return config.mode === "development";
       },
       buildStart() {
-        const msg = `[BuildStart]`
         // eslint-disable-next-line no-console
-        console.log(`${chalk.redBright(msg)} SENDING`)
-
-        remixPowerKitClient.events.$post({
-          json:{
-            message: msg,
-          }
-        })
-        .catch((error) => {
-          // eslint-disable-next-line no-console
-          console.error(`${chalk.redBright(msg)} ERROR`, error)
-        })
-        .finally(() => {
-          // eslint-disable-next-line no-console
-          console.log(`${chalk.redBright(msg)} SENT`)
-        })
-      },
-      watchChange(id, change) {
-        const msg = `[WatchChange]`
-        // eslint-disable-next-line no-console
-        console.log(`${chalk.redBright(msg)} ${chalk.yellowBright(id)} ${chalk.yellowBright(change)} SENDING`)
-
-        remixPowerKitClient.events.$post({
-          json:{
-            message: msg,
-          }
-        })
-        .catch((error) => {
-          // eslint-disable-next-line no-console
-          console.error(`${chalk.redBright(msg)} ERROR`, error)
-        })
-        .finally(() => {
-          // eslint-disable-next-line no-console
-          console.log(`${chalk.redBright(msg)} SENT`)
+        console.log(`${chalk.redBright('[BuildStart]')} --> SENDING EVENT`)
+        send({
+          type: EventTypes.START,
+          source: projectIdentifier,
+          data: {}
         })
       },
       handleHotUpdate({file, timestamp}) {
-        const msg = '[HandleHotUpdate]'
         // eslint-disable-next-line no-console
-        console.log(`${chalk.redBright(msg)} SENDING`, file, timestamp)
-
-        remixPowerKitClient.events.$post({
-          json:{
-            message: msg,
+        console.log(`${chalk.redBright('[HandleHotUpdate]')} --> SENDING EVENT`, file, timestamp)
+        send({
+          type: EventTypes.RESTART,
+          source: projectIdentifier,
+          time: new Date(timestamp),
+          data: {
+            file,
+            timestamp,
           }
         })
-        .catch((error) => {
-          // eslint-disable-next-line no-console
-          console.error(`${chalk.redBright(msg)} ERROR`, error)
-        })
-        .finally(() => {
-          // eslint-disable-next-line no-console
-          console.log(`${chalk.redBright(msg)} SENT`)
-        })
+
       },
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
+          // TODO: Replace with proper filtering for remix document, loader, and action urls
           if (!req.url || !req.method || req.url?.includes('remix-dev-tools') || req.url?.match(/\.(css|js|ts|tsx|ico|jpg|jpeg|png|svg)/) || req.url?.match(/^\/@/) ) {
             return next();
           }
+
           const start = performance.now();
           const url = new URL(req.url, `http://${req.headers.host}`);
-          const method = req.method?.toUpperCase();
-          let isLoaderRequest = false;
-          let isActionRequest = false;
-          let isDocumentRequest = false;
+          const requestMethod = req.method?.toUpperCase();
+          const requestHeaders = req.headers;
+          const requestUrl = decodeURI(url.toString());
+
+          let requestType = 'Request';
+          let requestEventType = EventTypes.REQUEST
+          let responseEventType = EventTypes.RESPONSE
 
           if (url.searchParams.has('_data')) {
-            if (method !== 'GET') {
-              isActionRequest = true;
+            if (requestMethod !== 'GET') {
+              requestType = 'Action';
+              requestEventType = EventTypes.ACTION_REQUEST
+              responseEventType = EventTypes.ACTION_RESPONSE
             } else {
-              isLoaderRequest = true;
+              requestType = 'Loader';
+              requestEventType = EventTypes.LOADER_REQUEST
+              responseEventType = EventTypes.LOADER_RESPONSE
             }
-          } else if(method === 'GET') {
-            isDocumentRequest = true;
-          }
-
-          // TODO: Add a proper request id to the request
-          // req.headers['x-request-id'] = `${Date.now()}-${Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)}`
-
-          // const requestHeaders = req.headers;
-          const requestMethod = method
-          const requestUrl = decodeURI(url.toString())
-          let requestType = 'Request';
-          if (isActionRequest){
-            requestType = '[Action]';
-          } else if(isLoaderRequest) {
-            requestType = '[Loader]';
-          } else if(isDocumentRequest) {
-            requestType = '[Document]';
+          } else if(requestMethod === 'GET') {
+            requestType = 'Document';
+            requestEventType = EventTypes.DOCUMENT_REQUEST
+            responseEventType = EventTypes.DOCUMENT_RESPONSE
           }
 
           // Request
-          const requestMsg = `${chalk.redBright(requestType)} Request for ${chalk.yellowBright(requestMethod)} ${chalk.yellowBright(requestUrl)}`
           // eslint-disable-next-line no-console
-          console.log(`${requestMsg} SENDING`)
-
-          remixPowerKitClient.events.$post({
-            json:{
-              message: `${requestType} Request for ${requestMethod} ${requestUrl}`,
-            }
-          })
-          .catch((error) => {
-            // eslint-disable-next-line no-console
-            console.error(`${requestMsg} ERROR`, error)
-          })
-          .finally(() => {
-            // eslint-disable-next-line no-console
-            console.log(`${requestMsg} SENT`)
+          console.log(`${chalk.redBright(`[${requestType} Request]`)} ${chalk.yellowBright(requestMethod)} ${chalk.yellowBright(requestUrl)} --> SENDING EVENT`)
+          send({
+            type: requestEventType,
+            source: projectIdentifier,
+            subject: `${requestMethod}#${requestUrl}`,
+            data: {
+              headers: requestHeaders,
+            },
           })
 
           const originalEnd = res.end;
           // @ts-ignore-next-line
           res.end = (...args) => {
-            const responseTime = diffInMs(start)
+            const elapsedTime = diffInMs(start)
 
             // @ts-ignore-next-line
             const originalResult = originalEnd.apply(res, args);
@@ -247,24 +203,17 @@ export const remixDevTools: (args?: {
             }
 
             // Response
-            const responseMsg = `${chalk.redBright(requestType)} Response for ${chalk.yellowBright(requestMethod)} ${chalk.yellowBright(requestUrl)} - ${chalk.white(responseTime)}ms`
             // eslint-disable-next-line no-console
-            console.log(`${responseMsg} SENDING`)
-
-            remixPowerKitClient.events.$post({
-              json:{
-                message: `${requestType} Response for ${requestMethod} ${requestUrl} - ${responseTime}ms`,
-              }
+            console.log(`${chalk.redBright(`[${requestType} Response]`)} ${chalk.yellowBright(requestMethod)} ${chalk.yellowBright(requestUrl)} ${chalk.white(elapsedTime)}ms --> SENDING EVENT`)
+            send({
+              type: responseEventType,
+              source: projectIdentifier,
+              subject: `${requestMethod}#${requestUrl}`,
+              data: {
+                headers: responseHeaders,
+                elapsedTime,
+              },
             })
-            .catch((error) => {
-              // eslint-disable-next-line no-console
-              console.error(`${responseMsg} ERROR`, error)
-            })
-            .finally(() => {
-              // eslint-disable-next-line no-console
-              console.log(`${responseMsg} SENT`)
-            })
-
             return originalResult
           }
 

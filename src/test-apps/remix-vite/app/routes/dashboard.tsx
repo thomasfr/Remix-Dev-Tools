@@ -9,12 +9,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function DashboardRoute() {
   const { message } = useLoaderData<typeof loader>();
 
-
+const foo = 'bar';
 
   return (
     <div>
       <h1>{message}</h1>
-      <h2>Hallo</h2>
+      <h2>Hello World {foo}</h2>
       <Form method='post' action='/logout'>
         <button type='submit'>Logout</button>
       </Form>
